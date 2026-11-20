@@ -15,6 +15,10 @@ shutdown :: ()
 
 }
 
+graph_canvas: ImGuiCanvas = .{
+    grid_step = 16.0
+};
+
 update :: (dt: float)
 {
     // Input
@@ -98,16 +102,40 @@ update :: (dt: float)
 
     // Graph
     ImGui.SetNextWindowClass(*pluebrint_window_class);
+    // ImGui.PushStyleVar(.WindowPadding, .{1,1});
     if ImGui.Begin("graph")
     {
-        ImGui.Text("graph");
+        imgui_canvas_begin(*graph_canvas);
+        defer imgui_canvas_end(*graph_canvas);
+
+        draw_node(*graph_canvas, "node", .{1,20}, .{14,8});
     }
+    // ImGui.PopStyleVar();
     ImGui.End();
 }
 
 draw :: ()
 {
     clear_background();
+}
+
+draw_node :: (canvas: *ImGuiCanvas, name: string, position: Vector2, size: Vector2)
+{
+    begin: = canvas_to_screen(canvas, position);
+    end: = canvas_to_screen(canvas, position + .{size.x, -size.y});
+    header_end: = canvas_to_screen(canvas, position + .{size.x, -2.0});
+    text_pos: = canvas_to_screen(canvas, position + .{0.8, -0.6});
+    rounding: = 10.0 * canvas.zoom.x;
+    font_size: = 13.0 * canvas.zoom.x;
+
+    draw_list: = ImGui.GetWindowDrawList();
+    ImGui.ImDrawList.AddRectFilled(draw_list, begin, end, 0xFF121212, rounding);
+    ImGui.ImDrawList.PushClipRect(draw_list, begin, header_end, true);
+    ImGui.ImDrawList.AddRectFilled(draw_list, begin, end, 0xFF1212BB, rounding);
+    ImGui.ImDrawList.PopClipRect(draw_list);
+
+    // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
+    ImGui.ImDrawList.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, name);
 }
 
 

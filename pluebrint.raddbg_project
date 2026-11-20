@@ -1,2 +1,8 @@
 // raddbg 0.9.28 project file
 
+target:
+{
+  executable: "bin/pluebrint.exe"
+  working_directory: bin
+  enabled: 1
+}

@@ -1,3 +1,5 @@
+#load "graph.jai";
+
 AppSettings :: struct
 {
     imgui_demo_open: bool; @serialize
@@ -12,9 +14,11 @@ init :: ()
 
 shutdown :: ()
 {
-
+    graph_shutdown(*graph);
 }
 
+graph: Graph;
+context_position: Vector2;
 graph_canvas: ImGuiCanvas = .{
     grid_step = 16.0
 };
@@ -26,9 +30,6 @@ update :: (dt: float)
     {
         yae_request_close();
     }
-
-    dockspace_id: = ImGui.GetID("pluebrint_dockspace");
-    pluebrint_window_class: = ImGui.WindowClass.{ ClassId = dockspace_id };
 
     // Main menu
     if ImGui.BeginMainMenuBar()
@@ -52,7 +53,10 @@ update :: (dt: float)
         ImGui.ShowDemoWindow(*app_settings.imgui_demo_open);
     }
 
-    flags: ImGui.WindowFlags = .ImGuiWindowFlags_NoDecoration | .ImGuiWindowFlags_NoMove | .ImGuiWindowFlags_NoSavedSettings;
+    dockspace_id: = ImGui.GetID("pluebrint_dockspace");
+    pluebrint_window_class: = ImGui.WindowClass.{ ClassId = dockspace_id };
+
+    flags: ImGui.WindowFlags = .NoDecoration | .NoMove | .NoSavedSettings | .NoBringToFrontOnFocus;
     viewport: = ImGui.GetMainViewport();
     ImGui.SetNextWindowPos(viewport.WorkPos);
     ImGui.SetNextWindowSize(viewport.WorkSize);
@@ -106,9 +110,30 @@ update :: (dt: float)
     if ImGui.Begin("graph")
     {
         imgui_canvas_begin(*graph_canvas);
-        defer imgui_canvas_end(*graph_canvas);
 
-        draw_node(*graph_canvas, "node", .{1,20}, .{14,8});
+        for node: graph.nodes
+        {
+            draw_node(*graph_canvas, node);
+        }
+
+
+        imgui_canvas_end(*graph_canvas);
+
+        if ImGui.IsItemHovered() && ImGui.IsMouseReleased(1)
+        {
+            context_position = screen_to_canvas(*graph_canvas, ImGui.GetMousePos());
+        }
+
+        if ImGui.BeginPopupContextItem()
+        {
+            if ImGui.Selectable("Create Node") { add_node(*graph, "node", context_position); }
+            ImGui.EndPopup();
+        }
+
+        // if ImGui.IsItemHovered() && ImGui.IsMouseReleased(1)
+        // {
+        //     if ImGui.Begin
+        // }
     }
     // ImGui.PopStyleVar();
     ImGui.End();
@@ -119,12 +144,13 @@ draw :: ()
     clear_background();
 }
 
-draw_node :: (canvas: *ImGuiCanvas, name: string, position: Vector2, size: Vector2)
+draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 {
-    begin: = canvas_to_screen(canvas, position);
-    end: = canvas_to_screen(canvas, position + .{size.x, -size.y});
-    header_end: = canvas_to_screen(canvas, position + .{size.x, -2.0});
-    text_pos: = canvas_to_screen(canvas, position + .{0.8, -0.6});
+    SIZE :: Vector2.{14,8};
+    begin: = canvas_to_screen(canvas, node.position);
+    end: = canvas_to_screen(canvas, node.position + .{SIZE.x, -SIZE.y});
+    header_end: = canvas_to_screen(canvas, node.position + .{SIZE.x, -2.0});
+    text_pos: = canvas_to_screen(canvas, node.position + .{0.8, -0.6});
     rounding: = 10.0 * canvas.zoom.x;
     font_size: = 13.0 * canvas.zoom.x;
 
@@ -135,7 +161,7 @@ draw_node :: (canvas: *ImGuiCanvas, name: string, position: Vector2, size: Vecto
     ImGui.ImDrawList.PopClipRect(draw_list);
 
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
-    ImGui.ImDrawList.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, name);
+    ImGui.ImDrawList.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.name.str);
 }
 
 

@@ -1,5 +1,7 @@
 #load "graph.jai";
 
+TEST_FILE_PATH :: "temp/test.pb";
+
 AppSettings :: struct
 {
     imgui_demo_open: bool; @serialize
@@ -9,7 +11,7 @@ app_settings: AppSettings;
 // Application callbacks
 init :: ()
 {
-
+    graph_load(*graph, TEST_FILE_PATH);
 }
 
 shutdown :: ()
@@ -26,22 +28,26 @@ graph_canvas: ImGuiCanvas = .{
 update :: (dt: float)
 {
     // Input
-    if is_pressed(.ESCAPE)
-    {
-        yae_request_close();
-    }
+    if is_pressed(.ESCAPE) { yae_request_close(); }
+    save_requested: = ImGui.IsKeyChordPressed(xx(ImGui.Key.ImGuiMod_Ctrl | ImGui.Key.ImGuiKey_S));
+    load_requested: = ImGui.IsKeyChordPressed(xx(ImGui.Key.ImGuiMod_Ctrl | ImGui.Key.ImGuiKey_L));
 
     // Main menu
     if ImGui.BeginMainMenuBar()
     {
         if ImGui.BeginMenu("File")
         {
-            ImGui.MenuItem("ImGuiDemo", "", *app_settings.imgui_demo_open);
+            if ImGui.MenuItem("Save", "Ctrl+S") { save_requested = true; }
+            if ImGui.MenuItem("Load", "Ctrl+L") { load_requested = true; }
+
             ImGui.Separator();
-            if ImGui.MenuItem("Exit", "Esc")
-            {
-                yae_request_close();
-            }
+
+            ImGui.MenuItem("ImGuiDemo", "", *app_settings.imgui_demo_open);
+
+            ImGui.Separator();
+
+            if ImGui.MenuItem("Exit", "Esc") { yae_request_close(); }
+
             ImGui.EndMenu();
         }
     }
@@ -53,6 +59,11 @@ update :: (dt: float)
         ImGui.ShowDemoWindow(*app_settings.imgui_demo_open);
     }
 
+    // Save / Load
+    if save_requested { graph_save(*graph, TEST_FILE_PATH); }
+    if load_requested { graph_load(*graph, TEST_FILE_PATH); }
+
+    // Graph windows
     dockspace_id: = ImGui.GetID("pluebrint_dockspace");
     pluebrint_window_class: = ImGui.WindowClass.{ ClassId = dockspace_id };
 
@@ -129,11 +140,6 @@ update :: (dt: float)
             if ImGui.Selectable("Create Node") { add_node(*graph, "node", context_position); }
             ImGui.EndPopup();
         }
-
-        // if ImGui.IsItemHovered() && ImGui.IsMouseReleased(1)
-        // {
-        //     if ImGui.Begin
-        // }
     }
     // ImGui.PopStyleVar();
     ImGui.End();

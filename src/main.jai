@@ -17,7 +17,11 @@ init :: ()
 shutdown :: ()
 {
     graph_shutdown(*graph);
+    array_reset(*selection);
 }
+
+NODE_SIZE :: Vector2.{14,8};
+NODE_ROUNDING :: 1;
 
 graph: Graph;
 context_position: Vector2;
@@ -25,12 +29,22 @@ graph_canvas: ImGuiCanvas = .{
     grid_step = 16.0
 };
 
+selection: [..]s32;
+selection_start: Vector2;
+is_selecting: bool;
+
 update :: (dt: float)
 {
     // Input
     if is_pressed(.ESCAPE) { yae_request_close(); }
     save_requested: = ImGui.IsKeyChordPressed(xx(ImGui.Key.ImGuiMod_Ctrl | ImGui.Key.ImGuiKey_S));
     load_requested: = ImGui.IsKeyChordPressed(xx(ImGui.Key.ImGuiMod_Ctrl | ImGui.Key.ImGuiKey_L));
+    left_mouse_pressed: = ImGui.IsMouseClicked(.Left);
+    left_mouse_down: = ImGui.IsMouseDown(.Left);
+    left_mouse_released: = ImGui.IsMouseReleased(.Left);
+    right_mouse_pressed: = ImGui.IsMouseClicked(.Right);
+    right_mouse_down: = ImGui.IsMouseDown(.Right);
+    right_mouse_released: = ImGui.IsMouseReleased(.Right);
 
     // Main menu
     if ImGui.BeginMainMenuBar()
@@ -104,6 +118,13 @@ update :: (dt: float)
     if ImGui.Begin("properties")
     {
         ImGui.Text("props");
+        ImGui.Value("clk", left_mouse_pressed);
+        // ImGui.Value("hov", graph_hovered);
+        // ImGui.Value("pgmp", previous_graph_mouse_position);
+        // ImGui.Value("gmp", graph_mouse_positi1on);
+        // ImGui.Value("min", selection_bounds.min);
+        // ImGui.Value("max", selection_bounds.max);
+        ImGui.Value("is_selecting", is_selecting);
     }
     ImGui.End();
 
@@ -120,21 +141,93 @@ update :: (dt: float)
     // ImGui.PushStyleVar(.WindowPadding, .{1,1});
     if ImGui.Begin("graph")
     {
+        draw_list: = ImGui.GetWindowDrawList();
+        graph_mouse_position: = screen_to_canvas(*graph_canvas, ImGui.GetMousePos());
+        previous_graph_mouse_position: = screen_to_canvas(*graph_canvas, ImGui.GetIO().MousePosPrev);
+
+        // Selection
+        selection_bounds: Bounds;
+        under_mouse_node: s32 = -1;
+        if is_selecting
+        {
+            array_clear(*selection);
+            selection_bounds = make_bounds(selection_start, graph_mouse_position);
+        }
+
+        // Graph
         imgui_canvas_begin(*graph_canvas);
 
         for node: graph.nodes
         {
             draw_node(*graph_canvas, node);
+
+            node_bounds: = make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
+            if collision_bounds_bounds(selection_bounds, node_bounds)
+            {
+                array_add(*selection, node.id);
+            }
+
+            if collision_point_bounds(graph_mouse_position, node_bounds)
+            {
+                under_mouse_node = node.id;
+            }
         }
 
+        for id: selection
+        {
+            SELECTION_THICKNESS :: 0.3;
+            SELECTION_MARGIN :: 0.2;
+            node: = pool_get(*graph.nodes, id);
+
+            additional_radius: = SELECTION_MARGIN + SELECTION_THICKNESS * 0.5;
+            bounds: = node_bounds(node);
+            bounds = dilate(bounds, additional_radius);
+
+            imgui_canvas_draw_bounds(*graph_canvas, bounds, .{255,196,57,255}, SELECTION_THICKNESS, NODE_ROUNDING + additional_radius, .SCALE_THICKNESS|.SCALE_ROUNDING);
+        }
+
+        imgui_canvas_draw_bounds(*graph_canvas, selection_bounds, Color.{255, 255, 255, 127});
 
         imgui_canvas_end(*graph_canvas);
+        graph_hovered: = ImGui.IsItemHovered(.AllowWhenBlockedByActiveItem);
 
-        if ImGui.IsItemHovered() && ImGui.IsMouseReleased(1)
+        if left_mouse_released
         {
-            context_position = screen_to_canvas(*graph_canvas, ImGui.GetMousePos());
+            if is_selecting
+            {
+                is_selecting = false;
+            }
+            else if graph_hovered
+            {
+                array_clear(*selection);
+                if under_mouse_node >= 0
+                {
+                    array_add(*selection, under_mouse_node);
+                }
+            }
         }
 
+        if graph_hovered
+        {
+            // Context Menu Input
+            if right_mouse_released
+            {
+                context_position = graph_mouse_position;
+            }
+
+            // Selection Input
+            if left_mouse_pressed
+            {
+                selection_start = graph_mouse_position;
+            }
+
+            if !is_selecting && left_mouse_down && previous_graph_mouse_position == selection_start && graph_mouse_position != selection_start
+            {
+                is_selecting = true;
+            }
+        }
+
+        // Context Menu
         if ImGui.BeginPopupContextItem()
         {
             if ImGui.Selectable("Create Node") { add_node(*graph, "node", context_position); }
@@ -143,6 +236,15 @@ update :: (dt: float)
     }
     // ImGui.PopStyleVar();
     ImGui.End();
+
+    if ImGui.IsKeyPressed(.ImGuiKey_Delete)
+    {
+        for id: selection
+        {
+            remove_node(*graph, id);
+        }
+        array_clear(*selection);
+    }
 }
 
 draw :: ()
@@ -152,24 +254,26 @@ draw :: ()
 
 draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 {
-    SIZE :: Vector2.{14,8};
-    begin: = canvas_to_screen(canvas, node.position);
-    end: = canvas_to_screen(canvas, node.position + .{SIZE.x, -SIZE.y});
-    header_end: = canvas_to_screen(canvas, node.position + .{SIZE.x, -2.0});
+    bounds: = canvas_to_screen(canvas, node_bounds(node));
+    header_end: = canvas_to_screen(canvas, node.position + .{NODE_SIZE.x, -2.0});
     text_pos: = canvas_to_screen(canvas, node.position + .{0.8, -0.6});
-    rounding: = 10.0 * canvas.zoom.x;
+    rounding: = NODE_ROUNDING * canvas.zoom.x * canvas.grid_step;
     font_size: = 13.0 * canvas.zoom.x;
 
     draw_list: = ImGui.GetWindowDrawList();
-    ImGui.ImDrawList.AddRectFilled(draw_list, begin, end, 0xFF121212, rounding);
-    ImGui.ImDrawList.PushClipRect(draw_list, begin, header_end, true);
-    ImGui.ImDrawList.AddRectFilled(draw_list, begin, end, 0xFF1212BB, rounding);
+    ImGui.ImDrawList.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF121212, rounding);
+    ImGui.ImDrawList.PushClipRect(draw_list, bounds.min, header_end, true);
+    ImGui.ImDrawList.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF1212BB, rounding);
     ImGui.ImDrawList.PopClipRect(draw_list);
 
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
     ImGui.ImDrawList.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.name.str);
 }
 
+node_bounds :: (node: *Node) -> Bounds
+{
+    return make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
+}
 
 // Boilerplate
 main :: ()

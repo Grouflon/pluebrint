@@ -38,10 +38,12 @@ DragMode :: enum
     NONE;
     SELECTING;
     MOVING;
+    PIN;
 }
 
 selection: [..]s32;
 drag_start: Vector2;
+dragged_pin: s32;
 drag_mode: DragMode;
 
 update :: (dt: float)
@@ -132,10 +134,13 @@ update :: (dt: float)
     // ImGui.PushStyleVar(.WindowPadding, .{1,1});
     if ImGui.Begin("graph")
     {
-        draw_list: = ImGui.GetWindowDrawList();
         graph_mouse_position: = screen_to_canvas(*graph_canvas, ImGui.GetMousePos());
         previous_graph_mouse_position: = screen_to_canvas(*graph_canvas, ImGui.GetIO().MousePosPrev);
         delta: = graph_mouse_position - previous_graph_mouse_position;
+
+        // Graph
+        imgui_canvas_begin(*graph_canvas);
+        draw_list: = ImGui.GetWindowDrawList();
 
         // Selection
         selection_bounds: Bounds;
@@ -155,6 +160,7 @@ update :: (dt: float)
             }
         }
 
+        // Pins
         squared_detection_distance: = pow(PIN_RADIUS * 1.1, 2);
         for pin: graph.pins
         {
@@ -162,10 +168,35 @@ update :: (dt: float)
             {
                 hovered_pin = pin.id;
             }
+
+            if pin.direction == .OUT && pin.target_pin >= 0
+            {
+                target_pin: = pool_get(*graph.pins, pin.target_pin);
+                draw_connection(*graph_canvas, pin.position, target_pin.position);
+            }
         }
 
-        // Graph
-        imgui_canvas_begin(*graph_canvas);
+        if drag_mode == .PIN
+        {
+            assert(dragged_pin >= 0);
+            pin: = pool_get(*graph.pins, dragged_pin);
+
+            a: Vector2;
+            b: Vector2;
+
+            if pin.direction == .OUT
+            {
+                a = pin.position;
+                b = graph_mouse_position;
+            }
+            else
+            {
+                a = graph_mouse_position;
+                b = pin.position;
+            }
+
+            draw_connection(*graph_canvas, a, b);
+        }
 
         for node: graph.nodes
         {
@@ -201,9 +232,21 @@ update :: (dt: float)
         imgui_canvas_end(*graph_canvas);
         graph_hovered: = ImGui.IsItemHovered(.AllowWhenBlockedByActiveItem);
 
-        if left_mouse_released && graph_hovered
+        if left_mouse_released
         {
-            if drag_mode == .NONE
+            if graph_hovered && drag_mode == .PIN
+            {
+                if hovered_pin >= 0
+                {
+                    source_pin: = pool_get(*graph.pins, dragged_pin);
+                    target_pin: = pool_get(*graph.pins, hovered_pin);
+                    if source_pin.direction != target_pin.direction
+                    {
+                        connect_pins(source_pin, target_pin);
+                    }
+                }
+            } 
+            if graph_hovered && drag_mode == .NONE
             {
                 array_clear(*selection);
                 if hovered_node >= 0
@@ -213,7 +256,7 @@ update :: (dt: float)
             }
 
             drag_mode = .NONE;
-            
+            dragged_pin = -1;
         }
 
         if graph_hovered
@@ -228,11 +271,16 @@ update :: (dt: float)
             if left_mouse_pressed
             {
                 drag_start = graph_mouse_position;
+                dragged_pin = hovered_pin;
             }
 
             if drag_mode == .NONE && left_mouse_down && previous_graph_mouse_position == drag_start && graph_mouse_position != drag_start
             {
-                if hovered_node >= 0
+                if dragged_pin >= 0
+                {
+                    drag_mode = .PIN;
+                }
+                else if hovered_node >= 0
                 {
                     drag_mode = .MOVING;
                     if !array_find(selection, hovered_node)
@@ -275,6 +323,8 @@ update :: (dt: float)
         ImGui.Value("clk", left_mouse_pressed);
         ImGui.Value("hovered_node", hovered_node);
         ImGui.Value("hovered_pin", hovered_pin);
+        ImGui.Value("dragged_pin", dragged_pin);
+        ImGui.Value("drag_mode", drag_mode.(s32));
         // ImGui.Value("hov", graph_hovered);
         // ImGui.Value("pgmp", previous_graph_mouse_position);
         // ImGui.Value("gmp", graph_mouse_positi1on);
@@ -334,9 +384,9 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 
 
     draw_list: = ImGui.GetWindowDrawList();
-    draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF121212, rounding);
+    draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xAA121212, rounding);
     draw_list.PushClipRect(draw_list, bounds.min, header_end, true);
-    draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF1212BB, rounding);
+    draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xAA1212BB, rounding);
     draw_list.PopClipRect(draw_list);
 
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
@@ -359,6 +409,33 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 
     draw_pins(canvas, node.graph, node.first_in_pin);
     draw_pins(canvas, node.graph, node.first_out_pin);
+}
+
+draw_connection :: (canvas: *ImGuiCanvas, a: Vector2, b: Vector2)
+{
+    draw_list: = ImGui.GetWindowDrawList();
+
+    bezier: [4]Vector2;
+    bezier[0] = a;
+    bezier[3] = b;
+    handle_length: = max((bezier[3].x - bezier[0].x) * 0.5, 5.0) * 1.2;
+    bezier[1] = bezier[0] + .{handle_length, 0};
+    bezier[2] = bezier[3] - .{handle_length, 0};
+
+    bezier[0] = canvas_to_screen(canvas, bezier[0]);
+    bezier[1] = canvas_to_screen(canvas, bezier[1]);
+    bezier[2] = canvas_to_screen(canvas, bezier[2]);
+    bezier[3] = canvas_to_screen(canvas, bezier[3]);
+
+    draw_list.AddBezierCubic(
+        draw_list, 
+        bezier[0], 
+        bezier[1], 
+        bezier[2], 
+        bezier[3], 
+        0xFFFFFFFF, 
+        canvas_to_screen(canvas, 0.2)
+    );
 }
 
 node_bounds :: (node: *Node) -> Bounds

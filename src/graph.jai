@@ -6,6 +6,8 @@ Graph :: struct
 
 Node :: struct
 {
+    graph: *Graph;
+
     id: s32; @serialize
     name: StringHash; @serialize
     position: Vector2; @serialize
@@ -16,15 +18,20 @@ Node :: struct
 
 Pin :: struct
 {
+    graph: *Graph;
+
     id: s32; @serialize
     node: s32 = -1; @serialize
     next_pin: s32 = -1; @serialize
     target_pin: s32 = -1; @serialize
+
+    position: Vector2;
 }
 
 graph_shutdown :: (graph: *Graph)
 {
     pool_reset(*graph.nodes);
+    pool_reset(*graph.pins);
 }
 
 graph_save :: (graph: *Graph, path: string) -> bool
@@ -47,12 +54,24 @@ graph_load :: (graph: *Graph, path: string) -> bool
     serializer_begin(*serializer, .READ);
     if !serialize(*serializer, graph) return false;
     serializer_end(*serializer);
+
+    for node: graph.nodes
+    {
+        node.graph = graph;
+    }
+
+    for pin: graph.pins
+    {
+        pin.graph = graph;
+    }
+
     return true;
 }
 
 add_node :: (graph: *Graph, name: string, position: Vector2) -> *Node
 {
     node, id: = pool_add(*graph.nodes);
+    node.graph = graph;
     node.id = id;
     node.name = string_hash(name);
     node.position = position;
@@ -65,9 +84,10 @@ PinDirection :: enum
     OUT;
 }
 
-add_pin :: (graph: *Graph, node: *Node, direction: PinDirection) -> *Pin
+add_pin :: (node: *Node, direction: PinDirection) -> *Pin
 {
-    pin, id: = pool_add(*graph.pins);
+    pin, id: = pool_add(*node.graph.pins);
+    pin.graph = node.graph;
     pin.id = id;
     pin.node = node.id;
 
@@ -88,7 +108,7 @@ add_pin :: (graph: *Graph, node: *Node, direction: PinDirection) -> *Pin
         pin: *Pin;
         while pin_id >= 0
         {
-            pin = pool_get(*graph.pins, pin_id);
+            pin = pool_get(*node.graph.pins, pin_id);
             pin_id = pin.next_pin;
         }
         pin.next_pin = id;
@@ -97,7 +117,7 @@ add_pin :: (graph: *Graph, node: *Node, direction: PinDirection) -> *Pin
     return pin;
 }
 
-remove_node :: (graph: *Graph, node: *Node)
+remove_node :: (node: *Node)
 {
     remove_pins :: (graph: *Graph, first_pin: s32)
     {
@@ -110,13 +130,13 @@ remove_node :: (graph: *Graph, node: *Node)
         }
     }
 
-    remove_pins(graph, node.first_in_pin);
-    remove_pins(graph, node.first_out_pin);
+    remove_pins(node.graph, node.first_in_pin);
+    remove_pins(node.graph, node.first_out_pin);
 
-    pool_remove(*graph.nodes, node.id);
+    pool_remove(*node.graph.nodes, node.id);
 }
 
 remove_node :: (graph: *Graph, node_id: s32)
 {
-    remove_node(graph, pool_get(*graph.nodes, node_id));
+    remove_node(pool_get(*graph.nodes, node_id));
 }

@@ -12,6 +12,10 @@ app_settings: AppSettings;
 init :: ()
 {
     graph_load(*graph, TEST_FILE_PATH);
+    for node: graph.nodes
+    {
+        node_update_positions(node);
+    }
 }
 
 shutdown :: ()
@@ -145,8 +149,13 @@ update :: (dt: float)
             if drag_mode == .MOVING
             {
                 node.position += delta;
-                
+                node_update_positions(node);
             }
+        }
+
+        for pin: graph.pins
+        {
+
         }
 
         // Graph
@@ -154,7 +163,7 @@ update :: (dt: float)
 
         for node: graph.nodes
         {
-            draw_node(*graph_canvas, *graph, node);
+            draw_node(*graph_canvas, node);
 
             node_bounds: = make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
             if collision_bounds_bounds(selection_bounds, node_bounds)
@@ -239,11 +248,12 @@ update :: (dt: float)
             if ImGui.Selectable("Create Node")
             {
                 node: = add_node(*graph, "node", context_position);
-                add_pin(*graph, node, .IN);
-                add_pin(*graph, node, .IN);
-                add_pin(*graph, node, .OUT);
-                add_pin(*graph, node, .OUT);
-                add_pin(*graph, node, .OUT);
+                add_pin(node, .IN);
+                add_pin(node, .IN);
+                add_pin(node, .OUT);
+                add_pin(node, .OUT);
+                add_pin(node, .OUT);
+                node_update_positions(node);
             }
             ImGui.EndPopup();
         }
@@ -289,11 +299,12 @@ draw :: ()
     clear_background();
 }
 
-draw_node :: (canvas: *ImGuiCanvas, graph: *Graph, node: *Node)
+NODE_HEADER_HEIGHT :: 2.0;
+PIN_RADIUS :: 0.4;
+draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 {
-    HEADER_HEIGHT :: 2.0;
     bounds: = canvas_to_screen(canvas, node_bounds(node));
-    header_end: = canvas_to_screen(canvas, node.position + .{NODE_SIZE.x, -HEADER_HEIGHT});
+    header_end: = canvas_to_screen(canvas, node.position + .{NODE_SIZE.x, -NODE_HEADER_HEIGHT});
     text_pos: = canvas_to_screen(canvas, node.position + .{0.8, -0.6});
     zoom: = max(canvas.zoom.x, canvas.zoom.y);
     scale: = zoom * canvas.grid_step;
@@ -310,35 +321,52 @@ draw_node :: (canvas: *ImGuiCanvas, graph: *Graph, node: *Node)
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
     draw_list.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.name.str);
 
-    PIN_LINE_HEIGHT :: 1.5;
-    PIN_RADIUS :: 0.4;
     PIN_THICKNESS :: 0.1;
-    draw_pins :: (canvas: *ImGuiCanvas, graph: *Graph, first_pin: s32, start_position: Vector2)
+    draw_pins :: (canvas: *ImGuiCanvas, graph: *Graph, first_pin: s32)
     {
         draw_list: = ImGui.GetWindowDrawList();
+        pin_id: = first_pin;
+        while pin_id >= 0
+        {
+            pin: = pool_get(*graph.pins, pin_id);
+
+            draw_list.AddCircle(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), 0xFFFFFFFF, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
+
+            pin_id = pin.next_pin;
+        }
+    }
+
+    draw_pins(canvas, node.graph, node.first_in_pin);
+    draw_pins(canvas, node.graph, node.first_out_pin);
+}
+
+node_bounds :: (node: *Node) -> Bounds
+{
+    return make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
+}
+
+PIN_LINE_HEIGHT :: 1.5;
+node_update_positions :: (node: *Node)
+{
+    pins_update_position :: (graph: *Graph, first_pin: s32, start_position: Vector2)
+    {
         pin_id: = first_pin;
         i: = 0;
         while pin_id >= 0
         {
             pin: = pool_get(*graph.pins, pin_id);
 
-            position: = start_position + .{0, -PIN_LINE_HEIGHT * i};
-            draw_list.AddCircle(draw_list, canvas_to_screen(canvas, position), canvas_to_screen(canvas, PIN_RADIUS), 0xFFFFFFFF, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
+            pin.position = start_position + .{0, -PIN_LINE_HEIGHT * i};
 
             pin_id = pin.next_pin;
             i += 1;
         }
     }
 
-    base_y: = node.position.y - HEADER_HEIGHT - PIN_LINE_HEIGHT * 0.7;
+    base_y: = node.position.y - NODE_HEADER_HEIGHT - PIN_LINE_HEIGHT * 0.7;
     x_margin: = 0.8 + PIN_RADIUS;
-    draw_pins(canvas, graph, node.first_in_pin, .{ node.position.x + x_margin, base_y });
-    draw_pins(canvas, graph, node.first_out_pin, .{ node.position.x + NODE_SIZE.x - x_margin, base_y });
-}
-
-node_bounds :: (node: *Node) -> Bounds
-{
-    return make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
+    pins_update_position(node.graph, node.first_in_pin, .{ node.position.x + x_margin, base_y });
+    pins_update_position(node.graph, node.first_out_pin, .{ node.position.x + NODE_SIZE.x - x_margin, base_y });
 }
 
 // Boilerplate

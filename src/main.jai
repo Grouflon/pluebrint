@@ -154,7 +154,7 @@ update :: (dt: float)
 
         for node: graph.nodes
         {
-            draw_node(*graph_canvas, node);
+            draw_node(*graph_canvas, *graph, node);
 
             node_bounds: = make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
             if collision_bounds_bounds(selection_bounds, node_bounds)
@@ -236,7 +236,15 @@ update :: (dt: float)
         // Context Menu
         if ImGui.BeginPopupContextItem()
         {
-            if ImGui.Selectable("Create Node") { add_node(*graph, "node", context_position); }
+            if ImGui.Selectable("Create Node")
+            {
+                node: = add_node(*graph, "node", context_position);
+                add_pin(*graph, node, .IN);
+                add_pin(*graph, node, .IN);
+                add_pin(*graph, node, .OUT);
+                add_pin(*graph, node, .OUT);
+                add_pin(*graph, node, .OUT);
+            }
             ImGui.EndPopup();
         }
     }
@@ -281,22 +289,51 @@ draw :: ()
     clear_background();
 }
 
-draw_node :: (canvas: *ImGuiCanvas, node: *Node)
+draw_node :: (canvas: *ImGuiCanvas, graph: *Graph, node: *Node)
 {
+    HEADER_HEIGHT :: 2.0;
     bounds: = canvas_to_screen(canvas, node_bounds(node));
-    header_end: = canvas_to_screen(canvas, node.position + .{NODE_SIZE.x, -2.0});
+    header_end: = canvas_to_screen(canvas, node.position + .{NODE_SIZE.x, -HEADER_HEIGHT});
     text_pos: = canvas_to_screen(canvas, node.position + .{0.8, -0.6});
-    rounding: = NODE_ROUNDING * canvas.zoom.x * canvas.grid_step;
-    font_size: = 13.0 * canvas.zoom.x;
+    zoom: = max(canvas.zoom.x, canvas.zoom.y);
+    scale: = zoom * canvas.grid_step;
+    rounding: = NODE_ROUNDING * scale;
+    font_size: = 13.0 * zoom;
+
 
     draw_list: = ImGui.GetWindowDrawList();
-    ImGui.ImDrawList.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF121212, rounding);
-    ImGui.ImDrawList.PushClipRect(draw_list, bounds.min, header_end, true);
-    ImGui.ImDrawList.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF1212BB, rounding);
-    ImGui.ImDrawList.PopClipRect(draw_list);
+    draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF121212, rounding);
+    draw_list.PushClipRect(draw_list, bounds.min, header_end, true);
+    draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xFF1212BB, rounding);
+    draw_list.PopClipRect(draw_list);
 
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
-    ImGui.ImDrawList.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.name.str);
+    draw_list.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.name.str);
+
+    PIN_LINE_HEIGHT :: 1.5;
+    PIN_RADIUS :: 0.4;
+    PIN_THICKNESS :: 0.1;
+    draw_pins :: (canvas: *ImGuiCanvas, graph: *Graph, first_pin: s32, start_position: Vector2)
+    {
+        draw_list: = ImGui.GetWindowDrawList();
+        pin_id: = first_pin;
+        i: = 0;
+        while pin_id >= 0
+        {
+            pin: = pool_get(*graph.pins, pin_id);
+
+            position: = start_position + .{0, -PIN_LINE_HEIGHT * i};
+            draw_list.AddCircle(draw_list, canvas_to_screen(canvas, position), canvas_to_screen(canvas, PIN_RADIUS), 0xFFFFFFFF, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
+
+            pin_id = pin.next_pin;
+            i += 1;
+        }
+    }
+
+    base_y: = node.position.y - HEADER_HEIGHT - PIN_LINE_HEIGHT * 0.7;
+    x_margin: = 0.8 + PIN_RADIUS;
+    draw_pins(canvas, graph, node.first_in_pin, .{ node.position.x + x_margin, base_y });
+    draw_pins(canvas, graph, node.first_out_pin, .{ node.position.x + NODE_SIZE.x - x_margin, base_y });
 }
 
 node_bounds :: (node: *Node) -> Bounds

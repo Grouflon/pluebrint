@@ -29,9 +29,16 @@ graph_canvas: ImGuiCanvas = .{
     grid_step = 16.0
 };
 
+DragMode :: enum
+{
+    NONE;
+    SELECTING;
+    MOVING;
+}
+
 selection: [..]s32;
-selection_start: Vector2;
-is_selecting: bool;
+drag_start: Vector2;
+drag_mode: DragMode;
 
 update :: (dt: float)
 {
@@ -113,29 +120,6 @@ update :: (dt: float)
     }
     ImGui.End();
 
-    // Properties
-    ImGui.SetNextWindowClass(*pluebrint_window_class);
-    if ImGui.Begin("properties")
-    {
-        ImGui.Text("props");
-        ImGui.Value("clk", left_mouse_pressed);
-        // ImGui.Value("hov", graph_hovered);
-        // ImGui.Value("pgmp", previous_graph_mouse_position);
-        // ImGui.Value("gmp", graph_mouse_positi1on);
-        // ImGui.Value("min", selection_bounds.min);
-        // ImGui.Value("max", selection_bounds.max);
-        ImGui.Value("is_selecting", is_selecting);
-    }
-    ImGui.End();
-
-    // Output
-    ImGui.SetNextWindowClass(*pluebrint_window_class);
-    if ImGui.Begin("output")
-    {
-        ImGui.Text("output");
-    }
-    ImGui.End();
-
     // Graph
     ImGui.SetNextWindowClass(*pluebrint_window_class);
     // ImGui.PushStyleVar(.WindowPadding, .{1,1});
@@ -144,14 +128,25 @@ update :: (dt: float)
         draw_list: = ImGui.GetWindowDrawList();
         graph_mouse_position: = screen_to_canvas(*graph_canvas, ImGui.GetMousePos());
         previous_graph_mouse_position: = screen_to_canvas(*graph_canvas, ImGui.GetIO().MousePosPrev);
+        delta: = graph_mouse_position - previous_graph_mouse_position;
 
         // Selection
         selection_bounds: Bounds;
         under_mouse_node: s32 = -1;
-        if is_selecting
+        if drag_mode == .SELECTING
         {
             array_clear(*selection);
-            selection_bounds = make_bounds(selection_start, graph_mouse_position);
+            selection_bounds = make_bounds(drag_start, graph_mouse_position);
+        }
+
+        for id: selection
+        {
+            node: = pool_get(*graph.nodes, id);
+            if drag_mode == .MOVING
+            {
+                node.position += delta;
+                
+            }
         }
 
         // Graph
@@ -191,13 +186,9 @@ update :: (dt: float)
         imgui_canvas_end(*graph_canvas);
         graph_hovered: = ImGui.IsItemHovered(.AllowWhenBlockedByActiveItem);
 
-        if left_mouse_released
+        if left_mouse_released && graph_hovered
         {
-            if is_selecting
-            {
-                is_selecting = false;
-            }
-            else if graph_hovered
+            if drag_mode == .NONE
             {
                 array_clear(*selection);
                 if under_mouse_node >= 0
@@ -205,6 +196,9 @@ update :: (dt: float)
                     array_add(*selection, under_mouse_node);
                 }
             }
+
+            drag_mode = .NONE;
+            
         }
 
         if graph_hovered
@@ -218,12 +212,24 @@ update :: (dt: float)
             // Selection Input
             if left_mouse_pressed
             {
-                selection_start = graph_mouse_position;
+                drag_start = graph_mouse_position;
             }
 
-            if !is_selecting && left_mouse_down && previous_graph_mouse_position == selection_start && graph_mouse_position != selection_start
+            if drag_mode == .NONE && left_mouse_down && previous_graph_mouse_position == drag_start && graph_mouse_position != drag_start
             {
-                is_selecting = true;
+                if under_mouse_node >= 0
+                {
+                    drag_mode = .MOVING;
+                    if !array_find(selection, under_mouse_node)
+                    {
+                        array_clear(*selection);
+                        array_add(*selection, under_mouse_node);
+                    }
+                }
+                else
+                {
+                    drag_mode = .SELECTING;
+                }
             }
         }
 
@@ -235,6 +241,29 @@ update :: (dt: float)
         }
     }
     // ImGui.PopStyleVar();
+    ImGui.End();
+
+    // Properties
+    ImGui.SetNextWindowClass(*pluebrint_window_class);
+    if ImGui.Begin("properties")
+    {
+        ImGui.Text("props");
+        ImGui.Value("clk", left_mouse_pressed);
+        // ImGui.Value("hov", graph_hovered);
+        // ImGui.Value("pgmp", previous_graph_mouse_position);
+        // ImGui.Value("gmp", graph_mouse_positi1on);
+        // ImGui.Value("min", selection_bounds.min);
+        // ImGui.Value("max", selection_bounds.max);
+        // ImGui.Value("is_selecting", drag_mode);
+    }
+    ImGui.End();
+
+    // Output
+    ImGui.SetNextWindowClass(*pluebrint_window_class);
+    if ImGui.Begin("output")
+    {
+        ImGui.Text("output");
+    }
     ImGui.End();
 
     if ImGui.IsKeyPressed(.ImGuiKey_Delete)

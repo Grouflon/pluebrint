@@ -124,6 +124,9 @@ update :: (dt: float)
     }
     ImGui.End();
 
+    hovered_node: s32 = -1;
+    hovered_pin: s32 = -1;
+
     // Graph
     ImGui.SetNextWindowClass(*pluebrint_window_class);
     // ImGui.PushStyleVar(.WindowPadding, .{1,1});
@@ -136,7 +139,6 @@ update :: (dt: float)
 
         // Selection
         selection_bounds: Bounds;
-        under_mouse_node: s32 = -1;
         if drag_mode == .SELECTING
         {
             array_clear(*selection);
@@ -153,9 +155,13 @@ update :: (dt: float)
             }
         }
 
+        squared_detection_distance: = pow(PIN_RADIUS * 1.1, 2);
         for pin: graph.pins
         {
-
+            if distance_squared(pin.position, graph_mouse_position) <= squared_detection_distance
+            {
+                hovered_pin = pin.id;
+            }
         }
 
         // Graph
@@ -171,9 +177,9 @@ update :: (dt: float)
                 array_add(*selection, node.id);
             }
 
-            if collision_point_bounds(graph_mouse_position, node_bounds)
+            if hovered_pin < 0 && collision_point_bounds(graph_mouse_position, node_bounds)
             {
-                under_mouse_node = node.id;
+                hovered_node = node.id;
             }
         }
 
@@ -200,9 +206,9 @@ update :: (dt: float)
             if drag_mode == .NONE
             {
                 array_clear(*selection);
-                if under_mouse_node >= 0
+                if hovered_node >= 0
                 {
-                    array_add(*selection, under_mouse_node);
+                    array_add(*selection, hovered_node);
                 }
             }
 
@@ -226,13 +232,13 @@ update :: (dt: float)
 
             if drag_mode == .NONE && left_mouse_down && previous_graph_mouse_position == drag_start && graph_mouse_position != drag_start
             {
-                if under_mouse_node >= 0
+                if hovered_node >= 0
                 {
                     drag_mode = .MOVING;
-                    if !array_find(selection, under_mouse_node)
+                    if !array_find(selection, hovered_node)
                     {
                         array_clear(*selection);
-                        array_add(*selection, under_mouse_node);
+                        array_add(*selection, hovered_node);
                     }
                 }
                 else
@@ -267,6 +273,8 @@ update :: (dt: float)
     {
         ImGui.Text("props");
         ImGui.Value("clk", left_mouse_pressed);
+        ImGui.Value("hovered_node", hovered_node);
+        ImGui.Value("hovered_pin", hovered_pin);
         // ImGui.Value("hov", graph_hovered);
         // ImGui.Value("pgmp", previous_graph_mouse_position);
         // ImGui.Value("gmp", graph_mouse_positi1on);
@@ -283,6 +291,19 @@ update :: (dt: float)
         ImGui.Text("output");
     }
     ImGui.End();
+
+    ImGui.SetMouseCursor(.Arrow);
+    if drag_mode == .NONE
+    {
+        if hovered_pin >= 0
+        {
+            ImGui.SetMouseCursor(.NotAllowed);
+        }
+        else if hovered_node >= 0
+        {
+            ImGui.SetMouseCursor(.ResizeAll);
+        }
+    }
 
     if ImGui.IsKeyPressed(.ImGuiKey_Delete)
     {

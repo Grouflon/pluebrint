@@ -39,6 +39,7 @@ DragMode :: enum
     SELECTING;
     MOVING;
     PIN;
+    DUMMY;
 }
 
 selection: [..]s32;
@@ -58,6 +59,7 @@ update :: (dt: float)
     right_mouse_pressed: = ImGui.IsMouseClicked(.Right);
     right_mouse_down: = ImGui.IsMouseDown(.Right);
     right_mouse_released: = ImGui.IsMouseReleased(.Right);
+    alt_down: = ImGui.IsKeyDown(.Mod_Alt);
 
     // Main menu
     if ImGui.BeginMainMenuBar()
@@ -227,49 +229,61 @@ update :: (dt: float)
             imgui_canvas_draw_bounds(*graph_canvas, bounds, .{255,196,57,255}, SELECTION_THICKNESS, NODE_ROUNDING + additional_radius, .SCALE_THICKNESS|.SCALE_ROUNDING);
         }
 
-        imgui_canvas_draw_bounds(*graph_canvas, selection_bounds, Color.{255, 255, 255, 127});
+        if drag_mode == .SELECTING
+        {
+            imgui_canvas_draw_bounds(*graph_canvas, selection_bounds, Color.{255, 255, 255, 127});
+        }
 
         imgui_canvas_end(*graph_canvas);
         graph_hovered: = ImGui.IsItemHovered(.AllowWhenBlockedByActiveItem);
-
-        if left_mouse_released
+        if !graph_hovered
         {
-            if graph_hovered && drag_mode == .PIN
-            {
-                if hovered_pin >= 0
-                {
-                    source_pin: = pool_get(*graph.pins, dragged_pin);
-                    target_pin: = pool_get(*graph.pins, hovered_pin);
-                    if source_pin.direction != target_pin.direction
-                    {
-                        connect_pins(source_pin, target_pin);
-                    }
-                }
-            } 
-            if graph_hovered && drag_mode == .NONE
-            {
-                array_clear(*selection);
-                if hovered_node >= 0
-                {
-                    array_add(*selection, hovered_node);
-                }
-            }
-
-            drag_mode = .NONE;
-            dragged_pin = -1;
+            hovered_node = -1;
+            hovered_pin = -1;
         }
 
         if graph_hovered
         {
+            if left_mouse_released
+            {
+                if drag_mode == .PIN
+                {
+                    if hovered_pin >= 0
+                    {
+                        source_pin: = pool_get(*graph.pins, dragged_pin);
+                        target_pin: = pool_get(*graph.pins, hovered_pin);
+                        if source_pin.direction != target_pin.direction
+                        {
+                            connect_pins(source_pin, target_pin);
+                        }
+                    }
+                }
+                else if drag_mode == .NONE
+                {
+                    array_clear(*selection);
+                    if hovered_node >= 0
+                    {
+                        array_add(*selection, hovered_node);
+                    }
+                }
+            }
+
             // Context Menu Input
             if right_mouse_released
             {
                 context_position = graph_mouse_position;
             }
 
-            // Selection Input
             if left_mouse_pressed
             {
+                if alt_down && hovered_pin >= 0
+                {
+                    pin: = pool_get(*graph.pins, hovered_pin);
+                    clear_pin(pin);
+                    drag_mode = .DUMMY;
+                }
+
+                // Selection
                 drag_start = graph_mouse_position;
                 dragged_pin = hovered_pin;
             }
@@ -294,6 +308,12 @@ update :: (dt: float)
                     drag_mode = .SELECTING;
                 }
             }
+        }
+
+        if left_mouse_released
+        {
+            drag_mode = .NONE;
+            dragged_pin = -1;
         }
 
         // Context Menu
@@ -401,6 +421,8 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
         {
             pin: = pool_get(*graph.pins, pin_id);
 
+            fill_color: u32 = xx ifx pin.target_pin >= 0 then 0xFFFFFFFF else 0xFF121212;
+            draw_list.AddCircleFilled(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), fill_color);
             draw_list.AddCircle(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), 0xFFFFFFFF, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
 
             pin_id = pin.next_pin;

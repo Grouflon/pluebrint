@@ -24,7 +24,6 @@ shutdown :: ()
     array_reset(*selection);
 }
 
-NODE_SIZE :: Vector2.{14,8};
 NODE_ROUNDING :: 1;
 
 graph: Graph;
@@ -174,7 +173,7 @@ update :: (dt: float)
             if pin.direction == .OUT && pin.target_pin >= 0
             {
                 target_pin: = pool_get(*graph.pins, pin.target_pin);
-                draw_connection(*graph_canvas, pin.position, target_pin.position);
+                draw_connection(*graph_canvas, pin.position, target_pin.position, pin_type_to_color(pin.type));
             }
         }
 
@@ -197,20 +196,20 @@ update :: (dt: float)
                 b = pin.position;
             }
 
-            draw_connection(*graph_canvas, a, b);
+            draw_connection(*graph_canvas, a, b, pin_type_to_color(pin.type));
         }
 
         for node: graph.nodes
         {
             draw_node(*graph_canvas, node);
 
-            node_bounds: = make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
-            if collision_bounds_bounds(selection_bounds, node_bounds)
+            bounds: = node_bounds(node);
+            if collision_bounds_bounds(selection_bounds, bounds)
             {
                 array_add(*selection, node.id);
             }
 
-            if hovered_pin < 0 && collision_point_bounds(graph_mouse_position, node_bounds)
+            if hovered_pin < 0 && collision_point_bounds(graph_mouse_position, bounds)
             {
                 hovered_node = node.id;
             }
@@ -322,11 +321,11 @@ update :: (dt: float)
             if ImGui.Selectable("Create Node")
             {
                 node: = add_node(*graph, "node", context_position);
-                add_pin(node, .IN);
-                add_pin(node, .IN);
-                add_pin(node, .OUT);
-                add_pin(node, .OUT);
-                add_pin(node, .OUT);
+                add_pin(node, .EXEC, .IN);
+                add_pin(node, .INT, .IN);
+                add_pin(node, .EXEC, .OUT);
+                add_pin(node, .BOOL, .OUT);
+                add_pin(node, .INT, .OUT);
                 node_update_positions(node);
             }
             ImGui.EndPopup();
@@ -367,11 +366,21 @@ update :: (dt: float)
     {
         if hovered_pin >= 0
         {
-            ImGui.SetMouseCursor(.NotAllowed);
+            ImGui.SetMouseCursor(.Cross);
         }
         else if hovered_node >= 0
         {
             ImGui.SetMouseCursor(.ResizeAll);
+        }
+    }
+    else if drag_mode == .PIN && hovered_pin >= 0 && hovered_pin != dragged_pin
+    {
+        pin1: = pool_get(*graph.pins, dragged_pin);
+        pin2: = pool_get(*graph.pins, hovered_pin);
+
+        if !can_pins_connect(pin1, pin2)
+        {
+            ImGui.SetMouseCursor(.NotAllowed);
         }
     }
 
@@ -395,7 +404,7 @@ PIN_RADIUS :: 0.4;
 draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 {
     bounds: = canvas_to_screen(canvas, node_bounds(node));
-    header_end: = canvas_to_screen(canvas, node.position + .{NODE_SIZE.x, -NODE_HEADER_HEIGHT});
+    header_end: = canvas_to_screen(canvas, node.position + .{node.size.x, -NODE_HEADER_HEIGHT});
     text_pos: = canvas_to_screen(canvas, node.position + .{0.8, -0.6});
     zoom: = max(canvas.zoom.x, canvas.zoom.y);
     scale: = zoom * canvas.grid_step;
@@ -421,9 +430,10 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
         {
             pin: = pool_get(*graph.pins, pin_id);
 
-            fill_color: u32 = xx ifx pin.target_pin >= 0 then 0xFFFFFFFF else 0xFF121212;
+            pin_color: = color_to_u32(pin_type_to_color(pin.type));
+            fill_color: u32 = xx ifx pin.target_pin >= 0 then pin_color else 0xFF121212;
             draw_list.AddCircleFilled(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), fill_color);
-            draw_list.AddCircle(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), 0xFFFFFFFF, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
+            draw_list.AddCircle(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), pin_color, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
 
             pin_id = pin.next_pin;
         }
@@ -433,14 +443,15 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
     draw_pins(canvas, node.graph, node.first_out_pin);
 }
 
-draw_connection :: (canvas: *ImGuiCanvas, a: Vector2, b: Vector2)
+draw_connection :: (canvas: *ImGuiCanvas, a: Vector2, b: Vector2, color: Color)
 {
     draw_list: = ImGui.GetWindowDrawList();
 
+    MIN_HANDLE :: 4.0;
     bezier: [4]Vector2;
     bezier[0] = a;
     bezier[3] = b;
-    handle_length: = max((bezier[3].x - bezier[0].x) * 0.5, 5.0) * 1.2;
+    handle_length: = MIN_HANDLE + abs((bezier[3].x - bezier[0].x) * 0.5 - MIN_HANDLE);
     bezier[1] = bezier[0] + .{handle_length, 0};
     bezier[2] = bezier[3] - .{handle_length, 0};
 
@@ -455,23 +466,26 @@ draw_connection :: (canvas: *ImGuiCanvas, a: Vector2, b: Vector2)
         bezier[1], 
         bezier[2], 
         bezier[3], 
-        0xFFFFFFFF, 
+        color_to_u32(color), 
         canvas_to_screen(canvas, 0.2)
     );
 }
 
 node_bounds :: (node: *Node) -> Bounds
 {
-    return make_bounds(node.position, node.position + .{NODE_SIZE.x, -NODE_SIZE.y});
+    return make_bounds(node.position, node.position + .{node.size.x, -node.size.y});
 }
 
-PIN_LINE_HEIGHT :: 1.5;
 node_update_positions :: (node: *Node)
 {
-    pins_update_position :: (graph: *Graph, first_pin: s32, start_position: Vector2)
+    NODE_WIDTH :: 14;
+    VERTICAL_MARGIN :: 1.0;
+    PIN_LINE_HEIGHT :: 1.5;
+
+    pins_update_position :: (graph: *Graph, first_pin: s32, start_position: Vector2) -> s32
     {
         pin_id: = first_pin;
-        i: = 0;
+        i: s32 = 0;
         while pin_id >= 0
         {
             pin: = pool_get(*graph.pins, pin_id);
@@ -481,12 +495,27 @@ node_update_positions :: (node: *Node)
             pin_id = pin.next_pin;
             i += 1;
         }
+        return i;
     }
 
-    base_y: = node.position.y - NODE_HEADER_HEIGHT - PIN_LINE_HEIGHT * 0.7;
+    base_y: = node.position.y - NODE_HEADER_HEIGHT - VERTICAL_MARGIN;
     x_margin: = 0.8 + PIN_RADIUS;
-    pins_update_position(node.graph, node.first_in_pin, .{ node.position.x + x_margin, base_y });
-    pins_update_position(node.graph, node.first_out_pin, .{ node.position.x + NODE_SIZE.x - x_margin, base_y });
+    pin_count: s32 = 0;
+    pin_count = max(pins_update_position(node.graph, node.first_in_pin, .{ node.position.x + x_margin, base_y }), pin_count);
+    pin_count = max(pins_update_position(node.graph, node.first_out_pin, .{ node.position.x + NODE_WIDTH - x_margin, base_y }), pin_count);
+
+    node.size = .{ NODE_WIDTH, NODE_HEADER_HEIGHT + VERTICAL_MARGIN * 2.0 + PIN_LINE_HEIGHT * max(pin_count-1, 0) };
+}
+
+pin_type_to_color :: (type: PinType) -> Color
+{
+    if type ==
+    {
+        case .BOOL; return .{149,0,0,255};
+        case .INT; return .{31,227,175,255};
+        case .FLOAT; return .{56,213,0,255};
+        case; return WHITE;
+    }
 }
 
 // Boilerplate

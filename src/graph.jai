@@ -11,6 +11,7 @@ Node :: struct
     id: s32; @serialize
     name: StringHash; @serialize
     position: Vector2; @serialize
+    size: Vector2;
 
     first_in_pin: s32 = -1; @serialize
     first_out_pin: s32 = -1; @serialize
@@ -22,6 +23,14 @@ PinDirection :: enum u8
     OUT;
 }
 
+PinType :: enum
+{
+    BOOL;
+    EXEC;
+    INT;
+    FLOAT;
+}
+
 Pin :: struct
 {
     graph: *Graph;
@@ -30,6 +39,7 @@ Pin :: struct
     node: s32 = -1; @serialize
     next_pin: s32 = -1; @serialize
     target_pin: s32 = -1; @serialize
+    type: PinType; @serialize
 
     direction: PinDirection;
     position: Vector2;
@@ -101,13 +111,14 @@ add_node :: (graph: *Graph, name: string, position: Vector2) -> *Node
     return node;
 }
 
-add_pin :: (node: *Node, direction: PinDirection) -> *Pin
+add_pin :: (node: *Node, type: PinType, direction: PinDirection) -> *Pin
 {
     pin, id: = pool_add(*node.graph.pins);
     pin.graph = node.graph;
     pin.id = id;
     pin.node = node.id;
     pin.direction = direction;
+    pin.type = type;
 
     first_ptr: *s32;
     if direction ==
@@ -135,10 +146,21 @@ add_pin :: (node: *Node, direction: PinDirection) -> *Pin
     return pin;
 }
 
-connect_pins :: (a: *Pin, b: *Pin)
+can_pins_connect :: (a: *Pin, b: *Pin) -> bool
 {
-    if a.target_pin == b.id return;
-    if a.node == b.node return;
+    if a == null return false;
+    if b == null return false;
+    if a.node == b.node return false;
+    if a.direction == b.direction return false;
+    if a.type != b.type return false;
+
+    return true;
+}
+
+connect_pins :: (a: *Pin, b: *Pin) -> bool
+{
+    if !can_pins_connect(a, b) return false;
+    if a.target_pin == b.id return true;
 
     clear_pin(a);
     clear_pin(b);
@@ -151,6 +173,8 @@ connect_pins :: (a: *Pin, b: *Pin)
 
     a.target_pin = b.id;
     b.target_pin = a.id;
+
+    return true;
 }
 
 clear_pin :: (pin: *Pin)

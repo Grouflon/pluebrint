@@ -25,6 +25,11 @@ shutdown :: ()
 }
 
 NODE_ROUNDING :: 1;
+NODE_HEADER_HEIGHT :: 2.0;
+NODE_WIDTH :: 14;
+NODE_VERTICAL_MARGIN :: 1.0;
+PIN_RADIUS :: 0.4;
+PIN_LINE_HEIGHT :: 1.5;
 
 graph: Graph;
 context_position: Vector2;
@@ -399,8 +404,6 @@ draw :: ()
     clear_background();
 }
 
-NODE_HEADER_HEIGHT :: 2.0;
-PIN_RADIUS :: 0.4;
 draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 {
     bounds: = canvas_to_screen(canvas, node_bounds(node));
@@ -478,10 +481,6 @@ node_bounds :: (node: *Node) -> Bounds
 
 node_update_positions :: (node: *Node)
 {
-    NODE_WIDTH :: 14;
-    VERTICAL_MARGIN :: 1.0;
-    PIN_LINE_HEIGHT :: 1.5;
-
     pins_update_position :: (graph: *Graph, first_pin: s32, start_position: Vector2) -> s32
     {
         pin_id: = first_pin;
@@ -498,13 +497,13 @@ node_update_positions :: (node: *Node)
         return i;
     }
 
-    base_y: = node.position.y - NODE_HEADER_HEIGHT - VERTICAL_MARGIN;
+    base_y: = node.position.y - NODE_HEADER_HEIGHT - NODE_VERTICAL_MARGIN;
     x_margin: = 0.8 + PIN_RADIUS;
     pin_count: s32 = 0;
     pin_count = max(pins_update_position(node.graph, node.first_in_pin, .{ node.position.x + x_margin, base_y }), pin_count);
     pin_count = max(pins_update_position(node.graph, node.first_out_pin, .{ node.position.x + NODE_WIDTH - x_margin, base_y }), pin_count);
 
-    node.size = .{ NODE_WIDTH, NODE_HEADER_HEIGHT + VERTICAL_MARGIN * 2.0 + PIN_LINE_HEIGHT * max(pin_count-1, 0) };
+    node.size = .{ NODE_WIDTH, NODE_HEADER_HEIGHT + NODE_VERTICAL_MARGIN * 2.0 + PIN_LINE_HEIGHT * max(pin_count-1, 0) };
 }
 
 pin_type_to_color :: (type: PinType) -> Color

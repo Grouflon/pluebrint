@@ -9,12 +9,13 @@ Node :: struct
     graph: *Graph;
 
     id: s32; @serialize
-    name: StringHash; @serialize
+    definition_id: u32; @serialize
     position: Vector2; @serialize
-    size: Vector2;
-
     first_in_pin: s32 = -1; @serialize
     first_out_pin: s32 = -1; @serialize
+
+    size: Vector2;
+    definition: *NodeDefinition;
 }
 
 PinDirection :: enum u8
@@ -23,7 +24,7 @@ PinDirection :: enum u8
     OUT;
 }
 
-PinType :: enum
+PinType :: enum u8
 {
     BOOL;
     EXEC;
@@ -39,11 +40,35 @@ Pin :: struct
     node: s32 = -1; @serialize
     next_pin: s32 = -1; @serialize
     target_pin: s32 = -1; @serialize
-    type: PinType; @serialize
 
+    definition: PinDefinition; @serialize // this is part of the cache, but we can use this to solve incoherent state later
     direction: PinDirection;
     position: Vector2;
+    index: s32 = -1;
 }
+
+PinName :: struct
+{
+    type: PinType;
+    name: string;
+}
+
+PinDefinition :: struct
+{
+    type: PinType; @serialize
+    name: StringHash; @serialize
+}
+
+NodeDefinition :: struct
+{
+    id: u32;
+    name: StringHash;
+    in_pins: [..]PinDefinition;
+    out_pins: [..]PinDefinition;
+}
+
+node_definitions: [..]*NodeDefinition;
+node_definition_by_id: Table(u32, *NodeDefinition);
 
 graph_shutdown :: (graph: *Graph)
 {
@@ -72,78 +97,64 @@ graph_load :: (graph: *Graph, path: string) -> bool
     if !serialize(*serializer, graph) return false;
     serializer_end(*serializer);
 
-    init_pins :: (graph: *Graph, first_id: s32, direction: PinDirection)
-    {
-        pin_id: = first_id;
-        while pin_id >= 0
-        {
-            pin: = pool_get(*graph.pins, pin_id);
-            pin.graph = graph;
-            pin.direction = direction;
+    // init_pins :: (graph: *Graph, node_definition: *NodeDefinition, first_id: s32, direction: PinDirection)
+    // {
+    //     pin_id: = first_id;
+    //     i: = 0;
+    //     while pin_id >= 0
+    //     {
+    //         pin: = pool_get(*graph.pins, pin_id);
 
-            pin_id = pin.next_pin;
-        }
-    }
+    //         pin.graph = graph;
+    //         pin.direction = direction;
+    //         pin.index = i;
+
+    //         definitions: *[..]PinDefinition = 
+    //         pin.definition = node
+
+    //         pin_id = pin.next_pin;
+    //         i += 1;
+    //     }
+    // }
 
     for node: graph.nodes
     {
-        node.graph = graph;
+        // node.graph = graph;
 
-        init_pins(graph, node.first_in_pin, .IN);
-        init_pins(graph, node.first_out_pin, .OUT);
+        // found:, node.definition = table_find(*node_definition_by_id, node.definition_id);
+
+        // init_pins(graph, node, node.first_in_pin, .IN);
+        // init_pins(graph, node, node.first_out_pin, .OUT);
+
+        build_node_cache(graph, node);
     }
 
     for pin: graph.pins
     {
         assert(pin.graph != null, "orphan pins in the graph");
+        assert(pin.node >= 0, "orphan pins in the graph");
     }
 
     return true;
 }
 
-add_node :: (graph: *Graph, name: string, position: Vector2) -> *Node
+add_node :: (graph: *Graph, definition: *NodeDefinition, position: Vector2) -> *Node
 {
+    assert(graph != null);
+    assert(definition != null);
+
     node, id: = pool_add(*graph.nodes);
     node.graph = graph;
     node.id = id;
-    node.name = string_hash(name);
+    node.definition_id = definition.id;
     node.position = position;
+
+    for pin: definition.in_pins { add_pin(node, .IN); }
+    for pin: definition.out_pins { add_pin(node, .OUT); }
+
+    build_node_cache(graph, node);
+
     return node;
-}
-
-add_pin :: (node: *Node, type: PinType, direction: PinDirection) -> *Pin
-{
-    pin, id: = pool_add(*node.graph.pins);
-    pin.graph = node.graph;
-    pin.id = id;
-    pin.node = node.id;
-    pin.direction = direction;
-    pin.type = type;
-
-    first_ptr: *s32;
-    if direction ==
-    {
-        case .IN; first_ptr = *node.first_in_pin;
-        case .OUT; first_ptr = *node.first_out_pin;
-    }
-
-    if first_ptr.* < 0
-    {
-        first_ptr.* = id;
-    }
-    else
-    {
-        pin_id: = first_ptr.*;
-        pin: *Pin;
-        while pin_id >= 0
-        {
-            pin = pool_get(*node.graph.pins, pin_id);
-            pin_id = pin.next_pin;
-        }
-        pin.next_pin = id;
-    }
-
-    return pin;
 }
 
 can_pins_connect :: (a: *Pin, b: *Pin) -> bool
@@ -152,7 +163,7 @@ can_pins_connect :: (a: *Pin, b: *Pin) -> bool
     if b == null return false;
     if a.node == b.node return false;
     if a.direction == b.direction return false;
-    if a.type != b.type return false;
+    if a.definition.type != b.definition.type return false;
 
     return true;
 }
@@ -211,3 +222,109 @@ remove_node :: (graph: *Graph, node_id: s32)
 {
     remove_node(pool_get(*graph.nodes, node_id));
 }
+
+register_node_definition :: (name: string, in_pins: []PinName, out_pins: []PinName)
+{
+    definition: = New(NodeDefinition);
+    definition.name = string_hash(name);
+
+    for pin: in_pins { array_add(*definition.in_pins, .{pin.type, string_hash(pin.name)}); }
+    for pin: out_pins { array_add(*definition.out_pins, .{pin.type, string_hash(pin.name)}); }
+
+    // Compute id (hash of name + all pin types)
+    buffer_size: = 4 + (in_pins.count + 1 + out_pins.count);
+    buffer: *u8 = talloc(buffer_size);
+    memcpy(buffer, *definition.name.hash, 4);
+    for pin, i: definition.in_pins {
+        buffer[4 + i] = xx pin.type;
+    }
+    buffer[4 + in_pins.count] = 255;
+    for pin, i: definition.out_pins {
+        buffer[4 + in_pins.count+1+i] = xx pin.type;
+    }
+    definition.id = sdbm_hash(buffer, buffer_size);
+
+    array_add(*node_definitions, definition);
+    table_add(*node_definition_by_id, definition.id, definition);
+}
+
+#scope_file
+build_node_cache :: (graph: *Graph, node: *Node)
+{
+    node.graph = graph;
+
+    found:, node.definition = table_find(*node_definition_by_id, node.definition_id);
+
+    traverse_pins :: (node: *Node, first_index: s32, direction: PinDirection)
+    {
+        pin_id: = first_index;
+        i: s32 = 0;
+        while pin_id >= 0
+        {
+            pin: = pool_get(*node.graph.pins, pin_id);
+            build_pin_cache(node, pin, direction, i);
+
+            pin_id = pin.next_pin;
+            i += 1;
+        }
+    }
+    traverse_pins(node, node.first_in_pin, .IN);
+    traverse_pins(node, node.first_out_pin, .OUT);
+}
+
+add_pin :: (node: *Node, direction: PinDirection) -> *Pin
+{
+    pin, id: = pool_add(*node.graph.pins);
+    pin.graph = node.graph;
+    pin.id = id;
+    pin.node = node.id;
+    pin.direction = direction;
+
+    first_ptr: *s32;
+    if direction ==
+    {
+        case .IN; first_ptr = *node.first_in_pin;
+        case .OUT; first_ptr = *node.first_out_pin;
+    }
+
+    if first_ptr.* < 0
+    {
+        first_ptr.* = id;
+    }
+    else
+    {
+        pin_id: = first_ptr.*;
+        pin: *Pin;
+        while pin_id >= 0
+        {
+            pin = pool_get(*node.graph.pins, pin_id);
+            pin_id = pin.next_pin;
+        }
+        pin.next_pin = id;
+    }
+
+    return pin;
+}
+
+build_pin_cache :: (parent: *Node, pin: *Pin, direction: PinDirection, index: s32)
+{
+    assert(parent != null);
+    assert(pin != null);
+    assert(pin.node == parent.id);
+
+    pin.graph = parent.graph;
+    pin.direction = direction;
+    pin.index = index;
+    pin.definition = .{};
+    if parent.definition != null
+    {
+        definitions: []PinDefinition = ifx direction == .IN then parent.definition.in_pins else parent.definition.out_pins;
+        if index >= 0 && index < definitions.count
+        {
+            pin.definition = definitions[index];
+        }
+    }
+}
+
+#import "Hash_Table";
+#import "Hash";

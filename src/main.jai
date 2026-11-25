@@ -11,6 +11,32 @@ app_settings: AppSettings;
 // Application callbacks
 init :: ()
 {
+    register_node_definition("start",
+        .[
+        ],
+        .[
+            {.EXEC, ""},
+        ]
+    );
+    register_node_definition("print",
+        .[
+            .{.EXEC, ""},
+            .{.FLOAT, "number"}
+        ],
+        .[
+            {.EXEC, ""}
+        ]
+    );
+    register_node_definition("+",
+        .[
+            .{.FLOAT, ""},
+            .{.FLOAT, ""}
+        ],
+        .[
+            {.FLOAT, ""}
+        ]
+    );
+
     graph_load(*graph, TEST_FILE_PATH);
     for node: graph.nodes
     {
@@ -178,7 +204,7 @@ update :: (dt: float)
             if pin.direction == .OUT && pin.target_pin >= 0
             {
                 target_pin: = pool_get(*graph.pins, pin.target_pin);
-                draw_connection(*graph_canvas, pin.position, target_pin.position, pin_type_to_color(pin.type));
+                draw_connection(*graph_canvas, pin.position, target_pin.position, pin_type_to_color(pin.definition.type));
             }
         }
 
@@ -201,7 +227,7 @@ update :: (dt: float)
                 b = pin.position;
             }
 
-            draw_connection(*graph_canvas, a, b, pin_type_to_color(pin.type));
+            draw_connection(*graph_canvas, a, b, pin_type_to_color(pin.definition.type));
         }
 
         for node: graph.nodes
@@ -323,15 +349,13 @@ update :: (dt: float)
         // Context Menu
         if ImGui.BeginPopupContextItem()
         {
-            if ImGui.Selectable("Create Node")
+            for definition: node_definitions
             {
-                node: = add_node(*graph, "node", context_position);
-                add_pin(node, .EXEC, .IN);
-                add_pin(node, .INT, .IN);
-                add_pin(node, .EXEC, .OUT);
-                add_pin(node, .BOOL, .OUT);
-                add_pin(node, .INT, .OUT);
-                node_update_positions(node);
+                if ImGui.Selectable(temp_c_string(definition.name.str))
+                {
+                    node: = add_node(*graph, definition, context_position);
+                    node_update_positions(node);
+                }
             }
             ImGui.EndPopup();
         }
@@ -387,6 +411,10 @@ update :: (dt: float)
         {
             ImGui.SetMouseCursor(.NotAllowed);
         }
+        else
+        {
+            ImGui.SetMouseCursor(.Cross);
+        }
     }
 
     if ImGui.IsKeyPressed(.ImGuiKey_Delete)
@@ -421,8 +449,9 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
     draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xAA1212BB, rounding);
     draw_list.PopClipRect(draw_list);
 
+    name: = ifx node.definition != null then node.definition.name.str else "";
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
-    draw_list.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.name.str);
+    draw_list.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, name);
 
     PIN_THICKNESS :: 0.1;
     draw_pins :: (canvas: *ImGuiCanvas, graph: *Graph, first_pin: s32)
@@ -433,7 +462,7 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
         {
             pin: = pool_get(*graph.pins, pin_id);
 
-            pin_color: = color_to_u32(pin_type_to_color(pin.type));
+            pin_color: = color_to_u32(pin_type_to_color(pin.definition.type));
             fill_color: u32 = xx ifx pin.target_pin >= 0 then pin_color else 0xFF121212;
             draw_list.AddCircleFilled(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), fill_color);
             draw_list.AddCircle(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), pin_color, thickness = canvas_to_screen(canvas, PIN_THICKNESS));

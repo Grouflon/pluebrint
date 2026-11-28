@@ -15,25 +15,25 @@ init :: ()
         .[
         ],
         .[
-            {.EXEC, ""},
+            exec_pin(),
         ]
     );
     register_node_definition("print",
         .[
-            .{.EXEC, ""},
-            .{.FLOAT, "number"}
+            exec_pin("in"),
+            value_pin(.FLOAT, "number"),
         ],
         .[
-            {.EXEC, ""}
+            exec_pin("out"),
         ]
     );
     register_node_definition("+",
         .[
-            .{.FLOAT, ""},
-            .{.FLOAT, ""}
+            value_pin(.FLOAT),
+            value_pin(.FLOAT),
         ],
         .[
-            {.FLOAT, ""}
+            value_pin(.FLOAT),
         ]
     );
 
@@ -52,10 +52,13 @@ shutdown :: ()
 
 NODE_ROUNDING :: 1;
 NODE_HEADER_HEIGHT :: 2.0;
-NODE_WIDTH :: 14;
-NODE_VERTICAL_MARGIN :: 1.0;
+NODE_X_PADDING :: 0.8;
+NODE_Y_PADDING :: 1.0;
+NODE_MIN_WIDTH :: 4;
+NODE_COLUMN_MARGIN :: 0.8;
 PIN_RADIUS :: 0.4;
 PIN_LINE_HEIGHT :: 1.5;
+PIN_TEXT_MARGIN :: 0.4;
 
 graph: Graph;
 context_position: Vector2;
@@ -204,7 +207,7 @@ update :: (dt: float)
             if pin.direction == .OUT && pin.target_pin >= 0
             {
                 target_pin: = pool_get(*graph.pins, pin.target_pin);
-                draw_connection(*graph_canvas, pin.position, target_pin.position, pin_type_to_color(pin.definition.type));
+                draw_connection(*graph_canvas, pin.position, target_pin.position, pin_type_to_color(pin.definition));
             }
         }
 
@@ -227,7 +230,7 @@ update :: (dt: float)
                 b = pin.position;
             }
 
-            draw_connection(*graph_canvas, a, b, pin_type_to_color(pin.definition.type));
+            draw_connection(*graph_canvas, a, b, pin_type_to_color(pin.definition));
         }
 
         for node: graph.nodes
@@ -373,6 +376,11 @@ update :: (dt: float)
         ImGui.Value("hovered_pin", hovered_pin);
         ImGui.Value("dragged_pin", dragged_pin);
         ImGui.Value("drag_mode", drag_mode.(s32));
+
+        if ImGui.Button("lol")
+        {
+            log("%", ImGui.CalcTextSize("a"));
+        }
         // ImGui.Value("hov", graph_hovered);
         // ImGui.Value("pgmp", previous_graph_mouse_position);
         // ImGui.Value("gmp", graph_mouse_positi1on);
@@ -436,7 +444,7 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
 {
     bounds: = canvas_to_screen(canvas, node_bounds(node));
     header_end: = canvas_to_screen(canvas, node.position + .{node.size.x, -NODE_HEADER_HEIGHT});
-    text_pos: = canvas_to_screen(canvas, node.position + .{0.8, -0.6});
+    text_pos: = canvas_to_screen(canvas, node.position + .{NODE_X_PADDING, -0.6});
     zoom: = max(canvas.zoom.x, canvas.zoom.y);
     scale: = zoom * canvas.grid_step;
     rounding: = NODE_ROUNDING * scale;
@@ -449,30 +457,34 @@ draw_node :: (canvas: *ImGuiCanvas, node: *Node)
     draw_list.AddRectFilled(draw_list, bounds.min, bounds.max, 0xAA1212BB, rounding);
     draw_list.PopClipRect(draw_list);
 
-    name: = ifx node.definition != null then node.definition.name.str else "";
     // @NOTE(remi): We probably need to preload several font sizes. See ScaleAllSizes() function
-    draw_list.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, name);
+    draw_list.AddText(draw_list, null, font_size, text_pos, 0xFFFFFFFF, node.definition.name.str);
 
     PIN_THICKNESS :: 0.1;
-    draw_pins :: (canvas: *ImGuiCanvas, graph: *Graph, first_pin: s32)
+    draw_pins :: (canvas: *ImGuiCanvas, graph: *Graph, first_pin: s32, font_size: float, direction: PinDirection)
     {
         draw_list: = ImGui.GetWindowDrawList();
         pin_id: = first_pin;
+        direction_sign: = ifx direction == .IN then 1.0 else -1.0;
         while pin_id >= 0
         {
             pin: = pool_get(*graph.pins, pin_id);
 
-            pin_color: = color_to_u32(pin_type_to_color(pin.definition.type));
+            text_x_offset: = ifx direction == .IN then PIN_RADIUS + PIN_TEXT_MARGIN else -PIN_RADIUS - PIN_TEXT_MARGIN - pin.definition.name_width;
+            text_position: = pin.position + .{text_x_offset, 0.4};
+
+            pin_color: = color_to_u32(pin_type_to_color(pin.definition));
             fill_color: u32 = xx ifx pin.target_pin >= 0 then pin_color else 0xFF121212;
             draw_list.AddCircleFilled(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), fill_color);
             draw_list.AddCircle(draw_list, canvas_to_screen(canvas, pin.position), canvas_to_screen(canvas, PIN_RADIUS), pin_color, thickness = canvas_to_screen(canvas, PIN_THICKNESS));
+            draw_list.AddText(draw_list, null, font_size, canvas_to_screen(canvas, text_position), 0xFFFFFFFF, pin.definition.name.str);
 
             pin_id = pin.next_pin;
         }
     }
 
-    draw_pins(canvas, node.graph, node.first_in_pin);
-    draw_pins(canvas, node.graph, node.first_out_pin);
+    draw_pins(canvas, node.graph, node.first_in_pin, font_size, .IN);
+    draw_pins(canvas, node.graph, node.first_out_pin, font_size, .OUT);
 }
 
 draw_connection :: (canvas: *ImGuiCanvas, a: Vector2, b: Vector2, color: Color)
@@ -510,39 +522,66 @@ node_bounds :: (node: *Node) -> Bounds
 
 node_update_positions :: (node: *Node)
 {
-    pins_update_position :: (graph: *Graph, first_pin: s32, start_position: Vector2) -> s32
+    pins_update_position :: (graph: *Graph, first_pin: s32, start_position: Vector2)
     {
         pin_id: = first_pin;
-        i: s32 = 0;
+        i: = 0;
         while pin_id >= 0
         {
             pin: = pool_get(*graph.pins, pin_id);
-
             pin.position = start_position + .{0, -PIN_LINE_HEIGHT * i};
-
             pin_id = pin.next_pin;
             i += 1;
         }
-        return i;
     }
 
-    base_y: = node.position.y - NODE_HEADER_HEIGHT - NODE_VERTICAL_MARGIN;
-    x_margin: = 0.8 + PIN_RADIUS;
-    pin_count: s32 = 0;
-    pin_count = max(pins_update_position(node.graph, node.first_in_pin, .{ node.position.x + x_margin, base_y }), pin_count);
-    pin_count = max(pins_update_position(node.graph, node.first_out_pin, .{ node.position.x + NODE_WIDTH - x_margin, base_y }), pin_count);
+    compute_column_size :: (graph: *Graph, first_pin: s32) -> count: s32, max_width: float
+    {
+        i: s32 = 0;
+        pin_id: = first_pin;
+        max_width: = 0.0;
+        while pin_id >= 0
+        {
+            pin: = pool_get(*graph.pins, pin_id);
+            max_width = max(max_width, pin.definition.name_width);
+            pin_id = pin.next_pin;
+            i += 1;
+        }
+        return i, (max_width + PIN_RADIUS * 2.0 + PIN_TEXT_MARGIN);
+    }
 
-    node.size = .{ NODE_WIDTH, NODE_HEADER_HEIGHT + NODE_VERTICAL_MARGIN * 2.0 + PIN_LINE_HEIGHT * max(pin_count-1, 0) };
+    node_width: float = NODE_MIN_WIDTH;
+    node_width = max(node_width, node.definition.name_width + 2 * NODE_X_PADDING);
+
+    base_y: = node.position.y - NODE_HEADER_HEIGHT - NODE_Y_PADDING;
+    x_padding: = NODE_X_PADDING + PIN_RADIUS;
+
+    left_column_count, left_column_width: = compute_column_size(node.graph, node.first_in_pin);
+    right_column_count, right_column_width: = compute_column_size(node.graph, node.first_out_pin);
+
+    node_width = max(node_width, left_column_width + NODE_COLUMN_MARGIN + right_column_width + 2 * NODE_X_PADDING);
+
+    node.size = .{ node_width, NODE_HEADER_HEIGHT + NODE_Y_PADDING * 2.0 + PIN_LINE_HEIGHT * (max(left_column_count, right_column_count, 1)-1) };
+
+    pins_update_position(node.graph, node.first_in_pin, .{ node.position.x + x_padding, base_y });
+    pins_update_position(node.graph, node.first_out_pin, .{ node.position.x + node_width - x_padding, base_y });
 }
 
-pin_type_to_color :: (type: PinType) -> Color
+pin_type_to_color :: (definition: PinDefinition) -> Color
 {
-    if type ==
+    if definition.kind ==
     {
-        case .BOOL; return .{149,0,0,255};
-        case .INT; return .{31,227,175,255};
-        case .FLOAT; return .{56,213,0,255};
-        case; return WHITE;
+        case .EXEC; return WHITE;
+        case;
+        {
+            if definition.type ==
+            {
+                case .BOOL; return .{149,0,0,255};
+                case .INTEGER; return .{31,227,175,255};
+                case .FLOAT; return .{56,213,0,255};
+                case; return WHITE;
+            }
+        }
     }
 }
 
